@@ -1,0 +1,35 @@
+# Netlify configuration for the Warthog Stream Dashboard
+# This file lives in the repo, so it is used automatically when Netlify
+# builds from GitHub (or any connected repo).
+
+[build]
+  publish = "dist"
+  command = "npm run build"
+
+# These headers are added to responses for the deployed site.
+# They will be present when the site is live on Netlify (https://...netlify.app).
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Basic CORS (allows the page to be iframed or fetched cross-origin if needed)
+    Access-Control-Allow-Origin = "*"
+
+    # Cross-origin isolation headers (originally added for a browser WASM node experiment).
+    # These put the page into a cross-origin isolated context.
+    #
+    # WARNING:
+    # - They do NOT allow `ws://` WebSocket connections from an HTTPS page.
+    #   That is blocked by the browser's mixed-content policy, which is not
+    #   controlled by response headers on the HTML/JS.
+    # - COOP + COEP are strict. If you load ANY cross-origin resource
+    #   (CDN script, image, font, etc.) that does not send the proper
+    #   Cross-Origin-Resource-Policy header, the browser will block it.
+    # - For the current pure-WS dashboard these are probably unnecessary.
+    Cross-Origin-Opener-Policy = "same-origin"
+    Cross-Origin-Embedder-Policy = "require-corp"
+
+# You can scope headers more narrowly if you want, e.g. only the HTML:
+# [[headers]]
+#   for = "/*.html"
+#   [headers.values]
+#     ...

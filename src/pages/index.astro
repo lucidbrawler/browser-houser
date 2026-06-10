@@ -259,14 +259,25 @@
       setStatus('Connecting to ' + cfg.short + ' Warthog bridge... (attempt ' + reconnectAttempts + ')');
       print('Connecting to ' + targetUrl);
 
-      // Mixed content warning: Netlify (and most static hosts) serve over HTTPS.
-      // Browsers block ws:// connections from https:// pages (mixed content).
-      // wscat works because it's not a browser. For deployed HTTPS use you need wss://
-      // (TLS reverse proxy / tunnel in front of the node).
-      if (window.location.protocol === 'https:' && targetUrl.startsWith('ws:')) {
-        print('!! WARNING: This page is HTTPS but target is plain ws:// — browser will block the connection (mixed content security policy).');
-        print('!! Public/LAN targets will only work when the dashboard is served over http:// (local dev) or when using wss:// targets.');
-        setStatus('Blocked: HTTPS page cannot connect to ws:// target');
+      // Mixed content handling:
+      // - Browsers block ws:// from https:// pages (hard security rule, headers like
+      //   COOP/COEP/CORS in netlify.toml or public/_headers cannot bypass it).
+      // - Exception: "Local" (127.0.0.1 / localhost) is usually allowed even from https
+      //   pages because browsers grant a special exemption for loopback addresses.
+      // - LAN and Public will be blocked/warned when the dashboard is on https.
+      const isHttps = window.location.protocol === 'https:';
+      const isInsecureWs = targetUrl.startsWith('ws:');
+      const isNonLocal = currentTarget !== 'local';
+
+      if (isHttps && isInsecureWs && isNonLocal) {
+        print('!! WARNING: This page is served over HTTPS but the target uses plain ws://');
+        print('!! Browsers block this regardless of CORS / COOP / COEP headers (mixed content).');
+        print('!! The headers in netlify.toml + public/_headers do NOT bypass this.');
+        print('!! LAN/Public will only work over http:// pages, or if you switch to wss:// targets.');
+        setStatus('Blocked: HTTPS page cannot open ws:// (mixed content)');
+      } else if (isHttps && isInsecureWs && !isNonLocal) {
+        // Local is special — browsers generally permit ws://127.0.0.1 from https pages.
+        print('Note: Local target over HTTPS — loopback connections are usually allowed by browsers.');
       }
 
       ws = new WebSocket(targetUrl);
@@ -384,7 +395,7 @@
         let delay = reconnectDelay;
         if (ev.code === 1002 || ev.code === 1006) {
           reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
-          if (window.location.protocol === 'https:' && getStreamURL().startsWith('ws:')) {
+          if (window.location.protocol === 'https:' && getStreamURL().startsWith('ws:') && currentTarget !== 'local') {
             print('!! This disconnect (1006) is very likely because the page is served over HTTPS and the target uses plain ws:// (mixed content is blocked by the browser).');
           }
           if (reconnectAttempts > 8 && currentTarget === 'public') {
