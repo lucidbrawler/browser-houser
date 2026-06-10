@@ -39,7 +39,8 @@
     <div class="section" style="padding: 0.5rem 1rem;">
       <strong>Target:</strong>
       <button id="btn-local">Local (127.0.0.1:10001)</button>
-      <button id="btn-public">LAN (192.168.1.223)</button>
+      <button id="btn-lan">LAN (192.168.1.223)</button>
+      <button id="btn-public">Public (67.241.0.143:10001)</button>
       <span id="current-node" class="current"></span>
     </div>
 
@@ -168,26 +169,46 @@
     let currentTarget = localStorage.getItem('nodeTarget') || 'public';
     let reconnectDelay = 2000;
 
-    function getStreamURL() {
-      if (currentTarget === 'local') {
-        return 'ws://127.0.0.1:10001/stream';
-      } else {
-        return 'ws://192.168.1.223:10001/stream';
+    const NODE_CONFIG = {
+      local: {
+        url: 'ws://127.0.0.1:10001/stream',
+        label: 'Local (127.0.0.1:10001)',
+        short: 'Local',
+        connected: 'local node'
+      },
+      lan: {
+        url: 'ws://192.168.1.223:10001/stream',
+        label: 'LAN (192.168.1.223)',
+        short: 'LAN',
+        connected: 'LAN node'
+      },
+      public: {
+        url: 'ws://67.241.0.143:10001/stream',
+        label: 'Public (67.241.0.143:10001)',
+        short: 'Public',
+        connected: 'public node'
       }
+    };
+
+    function getConfig(t = currentTarget) {
+      return NODE_CONFIG[t] || NODE_CONFIG.public;
+    }
+
+    function getStreamURL() {
+      return getConfig().url;
     }
 
     function setNodeTarget(target) {
-      if (target !== 'local' && target !== 'public') return;
+      if (!NODE_CONFIG[target]) return;
       currentTarget = target;
       localStorage.setItem('nodeTarget', target);
       reconnectDelay = 2000;
 
+      const cfg = getConfig(target);
       const label = document.getElementById('current-node');
-      if (label) {
-        label.textContent = target === 'local' ? 'Local (127.0.0.1:10001)' : 'LAN (192.168.1.223)';
-      }
+      if (label) label.textContent = cfg.label;
 
-      print('Switched target → ' + (target === 'local' ? 'local node' : 'public defitestnet bridge'));
+      print('Switched target → ' + cfg.connected);
 
       if (ws && ws.readyState === WebSocket.OPEN) {
         try { ws.close(1000, 'user switched node target'); } catch (e) {}
@@ -201,14 +222,16 @@
     window.setNodeTarget = setNodeTarget;
 
     function initNodeTargetUI() {
+      const cfg = getConfig();
       const label = document.getElementById('current-node');
-      if (label) {
-        label.textContent = currentTarget === 'local' ? 'Local (127.0.0.1:10001)' : 'LAN (192.168.1.223)';
-      }
+      if (label) label.textContent = cfg.label;
+
       // Wire buttons (Astro-safe)
       const btnLocal = document.getElementById('btn-local');
+      const btnLan = document.getElementById('btn-lan');
       const btnPublic = document.getElementById('btn-public');
       if (btnLocal) btnLocal.onclick = () => setNodeTarget('local');
+      if (btnLan) btnLan.onclick = () => setNodeTarget('lan');
       if (btnPublic) btnPublic.onclick = () => setNodeTarget('public');
     }
 
@@ -231,8 +254,9 @@
       reconnectAttempts++;
 
       const targetUrl = getStreamURL();
+      const cfg = getConfig();
 
-      setStatus('Connecting to ' + (currentTarget === 'local' ? 'local' : 'public') + ' Warthog bridge... (attempt ' + reconnectAttempts + ')');
+      setStatus('Connecting to ' + cfg.short + ' Warthog bridge... (attempt ' + reconnectAttempts + ')');
       print('Connecting to ' + targetUrl);
 
       ws = new WebSocket(targetUrl);
@@ -240,8 +264,8 @@
       ws.onopen = () => {
         isConnecting = false;
         lastMessageTime = Date.now();
-        print('Connected to ' + (currentTarget === 'local' ? 'local node' : 'public defitestnet bridge') + ' — stream open');
-        setStatus('Connected to ' + (currentTarget === 'local' ? 'Local' : 'Public') + ' — streaming');
+        print('Connected to ' + cfg.connected + ' — stream open');
+        setStatus('Connected to ' + cfg.short + ' — streaming');
         window.ws = ws;
 
         if (connectionHealthInterval) clearInterval(connectionHealthInterval);
@@ -351,8 +375,8 @@
         if (ev.code === 1002 || ev.code === 1006) {
           reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
           if (reconnectAttempts > 8 && currentTarget === 'public') {
-            print('Many errors on public. Switch to Local using the buttons.');
-            setStatus('Public unstable. Try Local target.');
+            print('Many errors on public. Switch to Local or LAN using the buttons.');
+            setStatus('Public unstable. Try Local or LAN target.');
             return;
           }
         } else {
