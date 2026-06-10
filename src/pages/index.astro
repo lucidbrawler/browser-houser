@@ -38,9 +38,9 @@
     <!-- Node toggle (ported from previous work) -->
     <div class="section" style="padding: 0.5rem 1rem;">
       <strong>Target:</strong>
-      <button id="btn-local">Local (127.0.0.1:10001)</button>
-      <button id="btn-lan">LAN (192.168.1.223)</button>
-      <button id="btn-public">Public (67.241.0.143:10001)</button>
+      <button id="btn-local">Local</button>
+      <button id="btn-lan">LAN</button>
+      <button id="btn-public">Public</button>
       <span id="current-node" class="current"></span>
     </div>
 
@@ -172,19 +172,19 @@
     const NODE_CONFIG = {
       local: {
         url: 'ws://127.0.0.1:10001/stream',
-        label: 'Local (127.0.0.1:10001)',
+        name: 'Local',
         short: 'Local',
         connected: 'local node'
       },
       lan: {
         url: 'ws://192.168.1.223:10001/stream',
-        label: 'LAN (192.168.1.223)',
+        name: 'LAN',
         short: 'LAN',
         connected: 'LAN node'
       },
       public: {
         url: 'ws://67.241.0.143:10001/stream',
-        label: 'Public (67.241.0.143:10001)',
+        name: 'Public',
         short: 'Public',
         connected: 'public node'
       }
@@ -206,7 +206,7 @@
 
       const cfg = getConfig(target);
       const label = document.getElementById('current-node');
-      if (label) label.textContent = cfg.label;
+      if (label) label.textContent = cfg.name;
 
       print('Switched target → ' + cfg.connected);
 
@@ -224,7 +224,7 @@
     function initNodeTargetUI() {
       const cfg = getConfig();
       const label = document.getElementById('current-node');
-      if (label) label.textContent = cfg.label;
+      if (label) label.textContent = cfg.name;
 
       // Wire buttons (Astro-safe)
       const btnLocal = document.getElementById('btn-local');
@@ -258,6 +258,16 @@
 
       setStatus('Connecting to ' + cfg.short + ' Warthog bridge... (attempt ' + reconnectAttempts + ')');
       print('Connecting to ' + targetUrl);
+
+      // Mixed content warning: Netlify (and most static hosts) serve over HTTPS.
+      // Browsers block ws:// connections from https:// pages (mixed content).
+      // wscat works because it's not a browser. For deployed HTTPS use you need wss://
+      // (TLS reverse proxy / tunnel in front of the node).
+      if (window.location.protocol === 'https:' && targetUrl.startsWith('ws:')) {
+        print('!! WARNING: This page is HTTPS but target is plain ws:// — browser will block the connection (mixed content security policy).');
+        print('!! Public/LAN targets will only work when the dashboard is served over http:// (local dev) or when using wss:// targets.');
+        setStatus('Blocked: HTTPS page cannot connect to ws:// target');
+      }
 
       ws = new WebSocket(targetUrl);
 
@@ -360,7 +370,7 @@
 
       ws.onerror = (err) => {
         console.error('WebSocket error:', err);
-        print('WebSocket error - check console');
+        print('WebSocket error - check console (common causes: target down, firewall, or mixed content block when page is HTTPS)');
         setStatus('WebSocket error - check if target is reachable');
       };
 
@@ -374,6 +384,9 @@
         let delay = reconnectDelay;
         if (ev.code === 1002 || ev.code === 1006) {
           reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+          if (window.location.protocol === 'https:' && getStreamURL().startsWith('ws:')) {
+            print('!! This disconnect (1006) is very likely because the page is served over HTTPS and the target uses plain ws:// (mixed content is blocked by the browser).');
+          }
           if (reconnectAttempts > 8 && currentTarget === 'public') {
             print('Many errors on public. Switch to Local or LAN using the buttons.');
             setStatus('Public unstable. Try Local or LAN target.');
