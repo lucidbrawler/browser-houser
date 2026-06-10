@@ -260,21 +260,32 @@
       print('Connecting to ' + targetUrl);
 
       // Mixed content handling:
-      // - Browsers block ws:// from https:// pages (hard security rule, headers like
-      //   COOP/COEP/CORS in netlify.toml or public/_headers cannot bypass it).
-      // - Exception: "Local" (127.0.0.1 / localhost) is usually allowed even from https
-      //   pages because browsers grant a special exemption for loopback addresses.
-      // - LAN and Public will be blocked/warned when the dashboard is on https.
+      // - Browsers normally block ws:// from https:// pages (hard security rule).
+      // - Local is exempted (loopback).
+      // - For Public we are deliberately just using ws:// even when deployed (https page),
+      //   because you confirmed the backend ws:// works fine from other VPS clients.
+      //   The browser on the deployed page may still refuse it due to mixed content.
+      //   If it fails, the console + onclose will show the real reason.
       const isHttps = window.location.protocol === 'https:';
       const isInsecureWs = targetUrl.startsWith('ws:');
       const isNonLocal = currentTarget !== 'local';
 
       if (isHttps && isInsecureWs && isNonLocal) {
-        print('!! WARNING: This page is served over HTTPS but the target uses plain ws://');
-        print('!! Browsers block this regardless of CORS / COOP / COEP headers (mixed content).');
-        print('!! The headers in netlify.toml + public/_headers do NOT bypass this.');
-        print('!! LAN/Public will only work over http:// pages, or if you switch to wss:// targets.');
-        setStatus('Blocked: HTTPS page cannot open ws:// (mixed content)');
+        if (currentTarget === 'public') {
+          // Special case for Public per your request: just use ws:// when deployed.
+          // Backend works (tested via wscat from other VPS). We warn but do not block the attempt.
+          print('!! WARNING (Public): Page is HTTPS but using plain ws:// (as requested for deployed use).');
+          print('!! Your external VPS tests show the ws:// endpoint is reachable. Browser mixed-content rules may still block it from this https page.');
+          print('!! Headers in netlify.toml / public/_headers do not change this. If it fails, fall back to http-served dashboard or use wss:// for Public.');
+          // Do NOT set "Blocked" status — let it try ws:// and report real outcome
+        } else {
+          // LAN (or future non-local non-public)
+          print('!! WARNING: This page is served over HTTPS but the target uses plain ws://');
+          print('!! Browsers block this regardless of CORS / COOP / COEP headers (mixed content).');
+          print('!! The headers in netlify.toml + public/_headers do NOT bypass this.');
+          print('!! This target will only work over http:// pages, or if you switch to wss://.');
+          setStatus('Blocked: HTTPS page cannot open ws:// (mixed content)');
+        }
       } else if (isHttps && isInsecureWs && !isNonLocal) {
         // Local is special — browsers generally permit ws://127.0.0.1 from https pages.
         print('Note: Local target over HTTPS — loopback connections are usually allowed by browsers.');
@@ -396,7 +407,12 @@
         if (ev.code === 1002 || ev.code === 1006) {
           reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
           if (window.location.protocol === 'https:' && getStreamURL().startsWith('ws:') && currentTarget !== 'local') {
-            print('!! This disconnect (1006) is very likely because the page is served over HTTPS and the target uses plain ws:// (mixed content is blocked by the browser).');
+            if (currentTarget === 'public') {
+              print('!! ws:// Public disconnect (1006) from https page — this is expected mixed-content behavior in most browsers.');
+              print('!! (Your wscat from other VPS worked because it is not a browser.)');
+            } else {
+              print('!! This disconnect (1006) is very likely because the page is served over HTTPS and the target uses plain ws:// (mixed content is blocked by the browser).');
+            }
           }
           if (reconnectAttempts > 8 && currentTarget === 'public') {
             print('Many errors on public. Switch to Local or LAN using the buttons.');
