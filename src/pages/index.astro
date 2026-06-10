@@ -1,17 +1,377 @@
 ---
-
 ---
 
 <html lang="en">
-	<head>
-		<meta charset="utf-8" />
-		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-		<link rel="icon" href="/favicon.ico" />
-		<meta name="viewport" content="width=device-width" />
-		<meta name="generator" content={Astro.generator} />
-		<title>Astro</title>
-	</head>
-	<body>
-		<h1>Astro</h1>
-	</body>
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width" />
+  <meta name="generator" content={Astro.generator} />
+  <title>Warthog Stream Dashboard (Astro)</title>
+  <style>
+    /* Basic retro-inspired styles ported/adapted from original for quick working example.
+       Full TV/glare effects can be added back from the original index.html if desired. */
+    body { font-family: system-ui, sans-serif; background: #1b1b1b; color: #e1eef6; margin: 0; padding: 1rem; }
+    .header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; }
+    .header img { height: 48px; }
+    .content { max-width: 1200px; margin: 0 auto; }
+    .section { background: #2a2a2a; padding: 1rem; margin-bottom: 1rem; border-radius: 4px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 0.25rem 0.5rem; border-bottom: 1px solid #444; text-align: left; }
+    textarea { width: 100%; height: 120px; background: #111; color: #0f0; font-family: monospace; padding: 0.5rem; }
+    .status { padding: 0.5rem; background: #333; margin-bottom: 1rem; border-radius: 4px; }
+    button { background: #444; color: white; border: none; padding: 0.4rem 0.8rem; margin-right: 0.5rem; cursor: pointer; border-radius: 3px; }
+    button:hover { background: #666; }
+    .current { font-weight: bold; color: #a9faaa; }
+    @media (max-width: 768px) { .grid { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="content">
+    <div class="header">
+      <img src="/img/main_logo.png" alt="Logo" />
+      <h1 style="margin:0;">Warthog Stream Dashboard</h1>
+      <span style="opacity:0.6;">(Astro port - basic working example)</span>
+    </div>
+
+    <!-- Node toggle (ported from previous work) -->
+    <div class="section" style="padding: 0.5rem 1rem;">
+      <strong>Target:</strong>
+      <button id="btn-local">Local (127.0.0.1:10001)</button>
+      <button id="btn-public">LAN (192.168.1.223)</button>
+      <span id="current-node" class="current"></span>
+    </div>
+
+    <div class="section">
+      <h3 style="margin-top:0;">Console</h3>
+      <textarea id="console" readonly></textarea>
+    </div>
+
+    <div id="status" class="status"></div>
+
+    <div class="section">
+      <h3>Chain (<span id="length">0</span>): <span id="totalWork">0 h</span> &commat; <span id="difficulty">0 h</span> per block</h3>
+    </div>
+
+    <div class="grid">
+      <div class="section">
+        <h3>Peers (<span id="npeers">0</span>)</h3>
+        <table>
+          <thead>
+            <tr><th>In</th><th>Type</th><th>Address</th><th>Since</th></tr>
+          </thead>
+          <tbody id="peersTable"></tbody>
+        </table>
+      </div>
+
+      <div class="section">
+        <h3>Mempool (<span id="nmempool">0</span>)</h3>
+        <table>
+          <thead>
+            <tr><th>From</th><th>To</th><th>Amount</th><th>Fee</th><th>TxHash</th></tr>
+          </thead>
+          <tbody id="mempoolTable"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // === Ported core logic from original src/js/main.js (basic working example) ===
+    // Kept the essential functions, WS handling, health/reconnect, and the toggle we added.
+    // Simplified DOM updates and removed heavy commented WASM code for cleanliness.
+    // Full retro CSS from original can be dropped in later if desired.
+
+    const statusElement = document.querySelector('#status');
+    const npeersElement = document.querySelector('#npeers');
+    const peersTableElement = document.querySelector('#peersTable');
+    const lengthElement = document.querySelector('#length');
+    const difficultyElement = document.querySelector('#difficulty');
+    const totalWorkElement = document.querySelector('#totalWork');
+    const nmempoolElement = document.querySelector('#nmempool');
+    const mempoolTableElement = document.querySelector('#mempoolTable');
+    const consoleElement = document.querySelector('#console');
+
+    function format_hash(N) {
+      var i = 0;
+      while (N >= 1000 && i <= 10) {
+        N /= 1000;
+        i += 1;
+      }
+      return N.toFixed(2) + ' ' + (['h', 'kh', 'Mh', 'Gh', 'Th', 'Ph', 'Eh', 'Zh', 'Yh', 'Rh', 'Qh'][i]);
+    }
+
+    const onChain = (event) => {
+      lengthElement.innerHTML = event.length;
+      difficultyElement.innerHTML = format_hash(event.difficulty);
+      totalWorkElement.innerHTML = format_hash(event.worksum);
+    };
+
+    const onConnect = (event) => {
+      npeersElement.innerHTML = event.total;
+      let row = peersTableElement.insertRow(0);
+      row.id = 'con-' + event.id;
+      let cell0 = row.insertCell(0);
+      cell0.innerHTML = event.inbound;
+      row.insertCell(1).innerHTML = event.type;
+      row.insertCell(2).innerHTML = event.address;
+      row.insertCell(3).innerHTML = event.since;
+    };
+
+    const onDisconnect = (event) => {
+      npeersElement.innerHTML = event.total;
+      let rowId = 'con-' + event.id;
+      const existing = document.querySelector(`#${rowId}`);
+      if (existing) existing.remove();
+    };
+
+    const onMempoolAdd = (event) => {
+      console.log(event);
+      nmempoolElement.innerHTML = event.total;
+      let rowId = 'mempool-' + event.id;
+      let elem = document.querySelector(`#${rowId}`);
+      if (elem != null) elem.remove();
+      let row = mempoolTableElement.insertRow(0);
+      row.id = rowId;
+      row.insertCell(0).innerHTML = event.fromAddress;
+      row.insertCell(1).innerHTML = event.toAddress;
+      row.insertCell(2).innerHTML = event.amount;
+      row.insertCell(3).innerHTML = event.fee;
+      row.insertCell(4).innerHTML = event.txHash;
+    };
+
+    const onMempoolErase = (event) => {
+      nmempoolElement.innerHTML = event.total;
+      let rowId = 'mempool-' + event.id;
+      let elem = document.querySelector(`#${rowId}`);
+      if (elem != null) elem.remove();
+    };
+
+    const print = (...texts) => {
+      const text = texts.join(' ');
+      console.log(text);
+      consoleElement.value += text + "\n";
+      consoleElement.scrollTop = consoleElement.scrollHeight;
+    };
+
+    const setStatus = (text) => {
+      statusElement.innerHTML = text;
+    };
+
+    let ws = null;
+    let isConnecting = false;
+    let reconnectAttempts = 0;
+    let lastMessageTime = 0;
+    let connectionHealthInterval = null;
+
+    let currentTarget = localStorage.getItem('nodeTarget') || 'public';
+    let reconnectDelay = 2000;
+
+    function getStreamURL() {
+      if (currentTarget === 'local') {
+        return 'ws://127.0.0.1:10001/stream';
+      } else {
+        return 'ws://192.168.1.223:10001/stream';
+      }
+    }
+
+    function setNodeTarget(target) {
+      if (target !== 'local' && target !== 'public') return;
+      currentTarget = target;
+      localStorage.setItem('nodeTarget', target);
+      reconnectDelay = 2000;
+
+      const label = document.getElementById('current-node');
+      if (label) {
+        label.textContent = target === 'local' ? 'Local (127.0.0.1:10001)' : 'LAN (192.168.1.223)';
+      }
+
+      print('Switched target → ' + (target === 'local' ? 'local node' : 'public defitestnet bridge'));
+
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.close(1000, 'user switched node target'); } catch (e) {}
+      }
+      setTimeout(() => {
+        isConnecting = false;
+        connectToBridge();
+      }, 150);
+    }
+
+    window.setNodeTarget = setNodeTarget;
+
+    function initNodeTargetUI() {
+      const label = document.getElementById('current-node');
+      if (label) {
+        label.textContent = currentTarget === 'local' ? 'Local (127.0.0.1:10001)' : 'LAN (192.168.1.223)';
+      }
+      // Wire buttons (Astro-safe)
+      const btnLocal = document.getElementById('btn-local');
+      const btnPublic = document.getElementById('btn-public');
+      if (btnLocal) btnLocal.onclick = () => setNodeTarget('local');
+      if (btnPublic) btnPublic.onclick = () => setNodeTarget('public');
+    }
+
+    function sendSubscribe(topic) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const msg = JSON.stringify({ action: 'subscribe', topic: topic });
+        ws.send(msg);
+        print('→ Sent: ' + msg);
+      } else {
+        print('Cannot subscribe to ' + topic + ' — socket not open');
+      }
+    }
+
+    function connectToBridge() {
+      if (isConnecting) {
+        print('connectToBridge skipped (already connecting)');
+        return;
+      }
+      isConnecting = true;
+      reconnectAttempts++;
+
+      const targetUrl = getStreamURL();
+
+      setStatus('Connecting to ' + (currentTarget === 'local' ? 'local' : 'public') + ' Warthog bridge... (attempt ' + reconnectAttempts + ')');
+      print('Connecting to ' + targetUrl);
+
+      ws = new WebSocket(targetUrl);
+
+      ws.onopen = () => {
+        isConnecting = false;
+        lastMessageTime = Date.now();
+        print('Connected to ' + (currentTarget === 'local' ? 'local node' : 'public defitestnet bridge') + ' — stream open');
+        setStatus('Connected to ' + (currentTarget === 'local' ? 'Local' : 'Public') + ' — streaming');
+        window.ws = ws;
+
+        if (connectionHealthInterval) clearInterval(connectionHealthInterval);
+        connectionHealthInterval = setInterval(() => {
+          if (!ws) return;
+          const age = Date.now() - lastMessageTime;
+          const state = ws.readyState;
+
+          if (state !== WebSocket.OPEN) {
+            print('Health check: socket no longer OPEN (state=' + state + '), forcing reconnect');
+            try { ws.close(); } catch (e) {}
+            if (connectionHealthInterval) { clearInterval(connectionHealthInterval); connectionHealthInterval = null; }
+            connectToBridge();
+            return;
+          }
+
+          if (age > 120000) {
+            print('Health check: no messages for ' + Math.round(age / 1000) + 's on open socket — reconnecting to keep stream alive');
+            try { ws.close(1000, 'health reconnect'); } catch (e) {}
+          }
+        }, 30000);
+
+        setTimeout(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            sendSubscribe('chain');
+          }
+        }, 40);
+      };
+
+      ws.onmessage = (event) => {
+        lastMessageTime = Date.now();
+        let data;
+        try { data = JSON.parse(event.data); } catch (e) { print('Bad JSON from WS:', event.data); return; }
+        console.log('Received:', data);
+
+        if (data.type === 'chain.state' && data.event && data.event.head) {
+          let head = data.event.head;
+          if (head.height !== undefined && head.length === undefined) {
+            head = { ...head, length: head.height };
+          }
+          onChain(head);
+          setStatus('Streaming — last chain update just now');
+          return;
+        }
+
+        if (data.type === 'chain.append' && data.event && data.event.head) {
+          let head = data.event.head;
+          if (head.height !== undefined && head.length === undefined) {
+            head = { ...head, length: head.height };
+          }
+          onChain(head);
+          const newCount = (data.event.newBlocks && data.event.newBlocks.length) || 0;
+          setStatus('Streaming — chain appended (height ' + head.height + ', +' + newCount + ' block' + (newCount === 1 ? '' : 's') + ')');
+          print('Chain append: ' + newCount + ' new block(s) at height ' + head.height);
+          return;
+        }
+
+        const payload = (data && data.data) ? data.data : data;
+
+        if (data.topic === 'chain' || (payload && payload.length !== undefined)) {
+          onChain(payload);
+          setStatus('Streaming — last chain update just now');
+        } else if (data.topic === 'mempool' || (payload && (payload.fromAddress !== undefined || payload.txHash !== undefined))) {
+          if (payload.removed || payload.action === 'erase' || data.action === 'erase') {
+            onMempoolErase(payload);
+          } else {
+            onMempoolAdd(payload);
+          }
+          setStatus('Streaming — mempool event just now');
+        } else if (data.topic === 'peers' || data.topic === 'peer' || (payload && (payload.address !== undefined || payload.id !== undefined))) {
+          if (payload.connected === false || data.action === 'disconnect' || payload.action === 'disconnect') {
+            onDisconnect(payload);
+          } else {
+            onConnect(payload);
+          }
+          setStatus('Streaming — peer event just now');
+        } else if (data.event && data.event.head) {
+          // Fallback for any event with a head (future chain.* types etc.)
+          let head = data.event.head;
+          if (head.height !== undefined && head.length === undefined) {
+            head = { ...head, length: head.height };
+          }
+          onChain(head);
+          const evType = data.type || 'chain update';
+          setStatus('Streaming — ' + evType);
+          print('Received ' + evType + ' (head updated)');
+        } else {
+          print('Unhandled event:', JSON.stringify(data));
+          setStatus('Streaming (unknown event type)');
+        }
+      };
+
+      ws.onerror = (err) => {
+        console.error('WebSocket error:', err);
+        print('WebSocket error - check console');
+        setStatus('WebSocket error - check if target is reachable');
+      };
+
+      ws.onclose = (ev) => {
+        isConnecting = false;
+        if (connectionHealthInterval) { clearInterval(connectionHealthInterval); connectionHealthInterval = null; }
+
+        const reason = ev.reason || '(no reason)';
+        print('Disconnected from bridge (code=' + ev.code + ', reason=' + reason + ', wasClean=' + ev.wasClean + ')');
+
+        let delay = reconnectDelay;
+        if (ev.code === 1002 || ev.code === 1006) {
+          reconnectDelay = Math.min(reconnectDelay * 1.5, 30000);
+          if (reconnectAttempts > 8 && currentTarget === 'public') {
+            print('Many errors on public. Switch to Local using the buttons.');
+            setStatus('Public unstable. Try Local target.');
+            return;
+          }
+        } else {
+          reconnectDelay = 2000;
+        }
+
+        setStatus('Disconnected (code ' + ev.code + '). Reconnecting in ~' + Math.round(delay / 1000) + 's...');
+        setTimeout(() => {
+          if (!ws || ws.readyState === WebSocket.CLOSED) connectToBridge();
+        }, delay);
+      };
+    }
+
+    // Boot
+    setStatus('Ready');
+    initNodeTargetUI();
+    connectToBridge();
+
+    console.log('>>> Astro port of Warthog stream dashboard loaded (basic working example)');
+  </script>
+</body>
 </html>
